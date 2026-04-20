@@ -25,21 +25,25 @@ jobs:
       - name: Run script
         run: python update_kml.py
 
-      - name: Commit and push if changed
+      - name: Check file existence
+        run: |
+          if [ -f meteoalarm_warnings.kml ]; then
+            echo "KML fil fundet!"
+            ls -l meteoalarm_warnings.kml
+          else
+            echo "KML fil blev ikke oprettet af scriptet."
+            exit 0 # Vi stopper pænt her uden fejlmeddelelse i Git
+          fi
+
+      - name: Commit and push
         run: |
           git config --global user.name 'MeteoBot'
           git config --global user.email 'bot@github.com'
-          
-          # Tjek om filen eksisterer før vi kører git add
-          if [ -f meteoalarm_warnings.kml ]; then
-            git add meteoalarm_warnings.kml
-            # Kun commit hvis der er ændringer
-            if ! git diff --cached --quiet; then
-              git commit -m "Update weather warnings KML"
-              git push
-            else
-              echo "Ingen ændringer i KML-filen."
-            fi
+          git add meteoalarm_warnings.kml
+          # Commit kun hvis der er ændringer (ellers fejler push)
+          if git diff --cached --quiet; then
+            echo "Ingen ændringer i data siden sidst."
           else
-            echo "KML fil blev ikke fundet - springer commit over."
+            git commit -m "Update weather warnings KML"
+            git push
           fi
