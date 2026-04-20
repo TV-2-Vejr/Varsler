@@ -1,12 +1,12 @@
 import requests
 import simplekml
-import json
+import sys
 
-# Konfiguration
-COUNTRIES = ["andorra", "austria", "belgium", "bulgaria", "croatia", "cyprus", "czechia", "denmark", "estonia", "finland", "france", "germany", "greece", "hungary", "iceland", "ireland", "israel", "italy", "latvia", "lithuania", "luxembourg", "malta", "moldova", "montenegro", "netherlands", "north-macedonia", "norway", "poland", "portugal", "romania", "serbia", "slovakia", "slovenia", "spain", "sweden", "switzerland", "united-kingdom"]
-SHAPEFILE_URL = "https://feeds.meteoalarm.org/api/v1/shapes/simplified-shapes"
+# Den interne stream-URL fundet i sidens kildekode
+ALL_WARNINGS_URL = "https://hub.meteoalarm.org/api/v1/stream-buffers/all-warnings/warnings"
+SHAPE_URL = "https://feeds.meteoalarm.org/api/v1/shapes/simplified-shapes"
+HEADERS = {"User-Agent": "Mozilla/5.0 (MeteoKML-Bot-2026)"}
 
-# Farver i AABBGGRR (Alpha, Blue, Green, Red)
 COLORS = {
     "Yellow": "8000ffff", 
     "Orange": "8000a5ff",
@@ -14,86 +14,60 @@ COLORS = {
 }
 
 def run():
-    print("Starter synkronisering...")
+    print("Henter alle europæiske varsler fra Hub API...")
+    kml = simplekml.Kml(name="MeteoAlarm Live Europe")
     
     # 1. Hent Shapes
     try:
-        r_shapes = requests.get(SHAPEFILE_URL, timeout=30)
-        r_shapes.raise_for_status()
-        shapes_data = r_shapes.json()
-        print(f"Hentet {len(shapes_data['features'])} geografiske områder.")
+        r_shapes = requests.get(SHAPE_URL, headers=HEADERS, timeout=30)
+        shape_map = {f['properties']['id']: f for f in r_shapes.json()['features']}
+        print(f"Shapes indlæst: {len(shape_map)} områder.")
     except Exception as e:
-        print(f"FEJL: Kunne ikke hente shapes: {e}")
-        return
+        print(f"Kunne ikke hente shapes: {e}")
+        sys.exit(1)
 
-    # Lav et opslagsværk over shapes baseret på ID
-    shape_map = {f['properties']['id']: f for f in shapes_data['features']}
+    # 2. Hent Alle Varsler i \xE9t hug
+    try:
+        r_warns = requests.get(ALL_WARNINGS_URL, headers=HEADERS, timeout=30)
+        warnings_list = r_warns.json() # Hub returnerer direkte en liste eller et objekt med varsler
+        
+        # Hvis API'et returnerer en liste direkte, ellers tjek for 'warnings' nøgle
+        data = warnings_list if isinstance(warnings_list, list) else warnings_list.get('warnings', [])
+        
+        print(f"API returnerede {len(data)} varsler.")
+    except Exception as e:
+        print(f"Kunne ikke hente varsler: {e}")
+        data = []
 
-    kml = simplekml.Kml(name="MeteoAlarm Europe")
-    found_any_warning = False
-
-    # 2. Hent varsler for hvert land
-    for country in COUNTRIES:
-        url = f"https://feeds.meteoalarm.org/api/v1/warnings/feeds-{country}"
-        try:
-            r_warn = requests.get(url, timeout=20)
-            if r_warn.status_code != 200:
-                continue
-            
-            data = r_warn.json()
-            warnings = data.get('warnings', [])
-            
-            if not warnings:
-                continue
-
-            for warning in warnings:
-                level = warning.get('awareness_level', {}).get('type')
-                hazard = warning.get('hazard_type', {}).get('type', 'Vejr')
+    count = 0
+    for warning in data:
+        lvl = warning.get('awareness_level', {}).get('type')
+        if lvl not in COLORS: continue
+        
+        hazard = warning.get('hazard_type', {}).get('type', 'Vejr')
+        
+        for area in warning.get('areas', []):
+            gid = area.get('id')
+            if gid in shape_map:
+                feat = shape_map[gid]
+                geom = feat['geometry']
                 
-                if level not in COLORS:
-                    continue
+                # Opret polygon
+                name = f"{hazard} ({lvl}) - {area.get('name')}"
+                if geom['type'] == "Polygon":
+                    pol = kml.newpolygon(name=name)
+                    pol.outerboundaryis = geom['coordinates'][0]
+                    pol.style.polystyle.color = COLORS[lvl]
+                    count += 1
+                elif geom['type'] == "MultiPolygon":
+                    for i, part in enumerate(geom['coordinates']):
+                        pol = kml.newpolygon(name=f"{name} pt{i}")
+                        pol.outerboundaryis = part[0]
+                        pol.style.polystyle.color = COLORS[lvl]
+                        count += 1
 
-                for area in warning.get('areas', []):
-                    geocode = area.get('id')
-                    
-                    # Tjek om geokoden findes i vores shape_map
-                    if geocode in shape_map:
-                        feature = shape_map[geocode]
-                        geom = feature['geometry']
-                        found_any_warning = True
-                        
-                        # Opret polygon i KML
-                        name = f"{country.upper()}: {hazard} ({level})"
-                        
-                        if geom['type'] == 'Polygon':
-                            pol = kml.newpolygon(name=name)
-                            pol.outerboundaryis = geom['coordinates'][0]
-                            apply_style(pol, level, area.get('name'), hazard)
-                        elif geom['type'] == 'MultiPolygon':
-                            for i, part in enumerate(geom['coordinates']):
-                                pol = kml.newpolygon(name=f"{name} del {i+1}")
-                                pol.outerboundaryis = part[0]
-                                apply_style(pol, level, area.get('name'), hazard)
-                    else:
-                        # Log hvis et varsel ikke kan matches med en form på kortet
-                        print(f"Bemærk: Geocode {geocode} ({area.get('name')}) findes ikke i shapefilen.")
-
-        except Exception as e:
-            print(f"Kunne ikke behandle {country}: {e}")
-
-    # 3. Gem filen hvis vi fandt noget
-    if found_any_warning:
-        kml.save("meteoalarm_warnings.kml")
-        print("SUCCESS: meteoalarm_warnings.kml er oprettet.")
-    else:
-        print("INFO: Ingen varsler matchede de geografiske former. Fil ikke oprettet.")
-
-def apply_style(pol, level, area_name, hazard):
-    pol.style.polystyle.color = COLORS[level]
-    pol.style.polystyle.outline = 1
-    pol.style.linestyle.color = "ff000000" # Sort kant
-    pol.style.linestyle.width = 1
-    pol.description = f"Område: {area_name}\nVarsel: {hazard}\nNiveau: {level}"
+    kml.save("meteoalarm_warnings.kml")
+    print(f"Succes! {count} polygoner gemt i meteoalarm_warnings.kml")
 
 if __name__ == "__main__":
     run()
