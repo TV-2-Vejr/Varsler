@@ -1,0 +1,32 @@
+name: Update MeteoAlarm KML
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Kører hver time
+  workflow_dispatch: # Gør det muligt at starte den manuelt
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install requests simplekml
+
+      - name: Run script
+        run: python update_kml.py
+
+      - name: Commit and push if changed
+        run: |
+          git config --global user.name 'MeteoBot'
+          git config --global user.email 'bot@github.com'
+          git add meteoalarm_warnings.kml
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update weather warnings KML" && git push)
