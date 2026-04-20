@@ -2,24 +2,25 @@ name: Update MeteoAlarm KML
 
 on:
   schedule:
-    - cron: '0 * * * *' # Kører hver time
-  workflow_dispatch: # Gør det muligt at starte den manuelt
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: |
-          pip install requests simplekml
+        run: pip install requests simplekml
 
       - name: Run script
         run: python update_kml.py
@@ -28,5 +29,17 @@ jobs:
         run: |
           git config --global user.name 'MeteoBot'
           git config --global user.email 'bot@github.com'
-          git add meteoalarm_warnings.kml
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update weather warnings KML" && git push)
+          
+          # Tjek om filen eksisterer før vi kører git add
+          if [ -f meteoalarm_warnings.kml ]; then
+            git add meteoalarm_warnings.kml
+            # Kun commit hvis der er ændringer
+            if ! git diff --cached --quiet; then
+              git commit -m "Update weather warnings KML"
+              git push
+            else
+              echo "Ingen ændringer i KML-filen."
+            fi
+          else
+            echo "KML fil blev ikke fundet - springer commit over."
+          fi
