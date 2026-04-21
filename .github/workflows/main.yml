@@ -29,10 +29,13 @@ jobs:
         run: |
           git config --global user.name 'MeteoBot'
           git config --global user.email 'bot@github.com'
+          
+          # Sørg for filen eksisterer
           touch meteoalarm_warnings.kml
+          
           git add meteoalarm_warnings.kml
           if git diff --cached --quiet; then
-            echo "Ingen ændringer fundet."
+            echo "Ingen ændringer i data."
           else
             git commit -m "Update weather warnings KML [skip ci]"
             git push
